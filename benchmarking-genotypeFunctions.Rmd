@@ -1,0 +1,124 @@
+---
+title: "Benchmarking function calls in PhenotypeSimulator"
+author: "Hannah Meyer"
+date: "11/16/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(ggplot2)
+library(microbenchmark)
+```
+
+Genotype simulation and covariance estimation are slow for large number of 
+samples and SNPs. Find bottlenecks in PhenotypeSimulator v1.1 and update for 
+next submission to CRAN and paper resubmission.
+
+### simulateGenotypes()
+
+```{r simulate-genotypes, cache=TRUE}
+largeN <- 50000
+smallN <- 100
+largeNrSNP=50000
+smallNrSNP=100
+frequencies=c(0.1, 0.2, 0.4)
+sampleID="ID_"
+options(microbenchmark.unit="s")
+
+bm_simulate <- microbenchmark(
+    simulate_via_sapply_largeN_smallNrSNP = {
+        samples <- paste(sampleID, seq(1, largeN, 1), sep="")
+        freq <- sample(frequencies, smallNrSNP, replace=TRUE)
+        X <- sapply(1:smallNrSNP, function(x) rbinom(largeN, 2, freq[x]))
+    },
+    simulate_via_matrix_largeN_smallNrSNP = {
+        samples <- paste(sampleID, seq(1, largeN, 1), sep="")
+        freq <- sample(frequencies, smallNrSNP, replace=TRUE)
+        X <- matrix(rbinom(largeN*smallNrSNP, 2, prob=rep(freq, each=largeN)), 
+                    nrow=largeN)
+    },
+    simulate_via_sapply_smallN_largeNrSNP = {
+        samples <- paste(sampleID, seq(1, smallN, 1), sep="")
+        freq <- sample(frequencies, largeNrSNP, replace=TRUE)
+        X <- sapply(1:largeNrSNP, function(x) rbinom(smallN, 2, freq[x]))
+    },
+    simulate_via_matrix_smallN_largeNrSNP = {
+        samples <- paste(sampleID, seq(1, smallN, 1), sep="")
+        freq <- sample(frequencies, largeNrSNP, replace=TRUE)
+        X <- matrix(rbinom(smallN*largeNrSNP, 2, prob=rep(freq, each=smallN)), 
+                    nrow=smallN)
+    },
+    assign_SNPIDs_sampleNames_smallN_largeNrSNP = { 
+        colnames(X) <- paste("SNP", 1:ncol(X), sep="")
+        rownames(X) <- samples
+    },
+    assign_SNPIDs_sampleNames_largeN_smallNrSNP = { 
+        colnames(X) <- paste("SNP", 1:ncol(X), sep="")
+        rownames(X) <- samples
+    },
+    times = 10
+)
+
+autoplot(bm_simulate)
+```
+
+```{r simulate-summary, cache=TRUE, echo=FALSE }
+kable(summary(bm_simulate, unit="s"), digits = 2, 
+      caption="Execution times of genotype simulation and ID assignment")
+```
+
+
+
+### getAlleleFrequencies()
+Genotype counting initially based on as.data.frame(table(snp)). Changed to 
+specifically counting 0,1,2 and raising an error when other genotype codes are
+supplied. 
+
+```{r counts, cache=TRUE }
+options(microbenchmark.unit="relative")
+snp <- rbinom(100000, 2, prob=0.2)
+
+bm_counts <- microbenchmark(
+    count_via_table = {counts <- data.frame(table(factor(snp, 
+                                                levels=c(0,1,2))))[,2]},
+    count_via_length = {    pp <- length(which(snp == 0))
+                  pq <- length(which(snp == 1))
+                  qq <- length(which(snp == 2))
+        
+    },
+    times=10
+)
+
+autoplot(bm_counts)
+```
+
+
+```{r counts-summary, cache=TRUE, echo=FALSE }
+kable(summary(bm_counts, unit="relative"), digits = 2, 
+      caption="Relative execution times of genotype counting")
+```
+
+
+### getKinship()
+
+```{r covariance, cache=TRUE }
+options(microbenchmark.unit="relative")
+bm_covariance <- microbenchmark(
+    cov_via_tcrossprod = { kinship <- tcrossprod(X) },
+    cov_via_XXT = { kinship <-  X %*% t(X)},
+    times = 10
+)
+
+autoplot(bm_covariance)
+```
+
+
+```{r covariance-summary, cache=TRUE, echo=FALSE }
+kable(summary(bm_covariance), digits = 2, 
+      caption="Relative execution times of genotype counting")
+```
+
+
+
